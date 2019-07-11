@@ -16,9 +16,8 @@ from opt import opt
 from data import Data
 from network import MGN
 from loss import Loss
-from utils.get_optimizer import get_optimizer
-from utils.extract_feature import extract_feature
-from utils.metrics import mean_ap, cmc, re_ranking
+from utils import get_optimizer,extract_feature,CenterLoss
+from metrics import mean_ap, cmc, re_ranking
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
@@ -32,9 +31,13 @@ class Main():
         self.queryset = data.queryset
 
         self.model = model.to('cuda')
+        # self.model=nn.DataParallel(model).cuda()
         self.loss = loss
         self.optimizer = get_optimizer(model)
         self.scheduler = lr_scheduler.MultiStepLR(self.optimizer, milestones=opt.lr_scheduler, gamma=0.1)
+        ###############################
+        self.center_criterion=CenterLoss(numberclasses=751,feat_dim=256,use_gpu=True)
+        self.optimizer_center=torch.optim.SGD(self.center_criterion.parameters(),lr=0.5)
 
     def train(self):
 
@@ -47,8 +50,20 @@ class Main():
             self.optimizer.zero_grad()
             outputs = self.model(inputs)
             loss = self.loss(outputs, labels)
-            loss.backward()
+            # loss.backward()
+            # self.optimizer.step()
+            centerloss=[self.center_criterion(outputs,labels) for output in outputs[1:5]]
+            Center_Loss=sum(centerloss)/len(centerloss)
+            loss_sum=loss+0.0005*Center_Loss
+
+            self.optimizer_center.zero_grad()
+            loss_sum.backward()
+
             self.optimizer.step()
+            for param in self.center_criterion.parameters():
+                param.grad.data*=(1./0.0005)
+            self.optimizer_center.step()
+
 
     def evaluate(self):
 
