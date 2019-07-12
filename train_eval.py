@@ -19,6 +19,10 @@ from loss import Loss
 from utils import get_optimizer,extract_feature,CenterLoss
 from metrics import mean_ap, cmc, re_ranking
 
+import logging
+import logging.handlers
+import scipy.io
+
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 
 
@@ -65,7 +69,7 @@ class Main():
             self.optimizer_center.step()
 
 
-    def evaluate(self):
+    def evaluate(self,logger):
 
         self.model.eval()
 
@@ -149,9 +153,18 @@ class Main():
         fig.savefig("show.png")
         print('result saved to show.png')
 
+def create_logger():
+    global logger
+    logger=logging.getLogger('Logger')
+    logger.setLevel(logging.DEBUG)
+    handler=logging.handlers.RotatingFileHandler('./test.log',maxBytes=0,backupCount=2000)
+    formatter=logging.Formatter('%(asctime)s-%(name)s-%(levelname)s-%(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
 
 if __name__ == '__main__':
-
+    create_logger()
+    logger.info('BEGIN')
     data = Data()
     model = MGN()
     loss = Loss()
@@ -164,9 +177,17 @@ if __name__ == '__main__':
             main.train()
             if epoch % 50 == 0:
                 print('\nstart evaluate')
-                main.evaluate()
-                os.makedirs('weights', exist_ok=True)
-                torch.save(model.state_dict(), ('weights/model_{}.pt'.format(epoch)))
+                main.evaluate(logger)
+                # os.makedirs('weights', exist_ok=True)
+                # torch.save(model.state_dict(), ('weights/model_{}.pt'.format(epoch)))
+                PATH_CHECKP='weights/checkpoint_epoch'+str(epoch)+'.pth.tar'
+                torch.save({
+                    'epoch':epoch,
+                    'model_state_dict':model.state_dict(),
+                    'optimizer_state_dict':main.optimizer.state_dict(),
+                    'scheduler_dict':main.scheduler.state_dict(),
+                    'optimizer_center':main.optimizer_center.state_dict(),
+                })
 
     if opt.mode == 'evaluate':
         print('start evaluate')

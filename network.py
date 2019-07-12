@@ -6,7 +6,8 @@ import torch.nn as nn
 from torchvision.models.resnet import resnet50, Bottleneck
 from torch.nn import functional as F
 num_classes = 751  # market1501 751 cuhk 767 duke702
-
+width_ratio=1.0
+height_ratio=0.2
 
 class ConvBlock(nn.Module):
     """Basic convolutional block.
@@ -239,13 +240,40 @@ class HACNN(nn.Module):
             self.local_conv1 = InceptionB(32, nchannels[0])
             self.local_conv2 = InceptionB(nchannels[0], nchannels[1])
             self.local_conv3 = InceptionB(nchannels[1], nchannels[2])
-            self.fc_local = nn.Sequential(
-                nn.Linear(nchannels[2] * 4, feat_dim),
+            self.fc_local0 = nn.Sequential(
+                nn.Linear(nchannels[2] * 1, feat_dim),
                 nn.BatchNorm1d(feat_dim),
                 nn.ReLU(),
             )
-            self.classifier_local = nn.Linear(feat_dim, num_classes)
-            self.feat_dim = feat_dim * 2
+            self.fc_local1 = nn.Sequential(
+                nn.Linear(nchannels[2] * 1, feat_dim),
+                nn.BatchNorm1d(feat_dim),
+                nn.ReLU(),
+            )
+            self.fc_local2 = nn.Sequential(
+                nn.Linear(nchannels[2] * 1, feat_dim),
+                nn.BatchNorm1d(feat_dim),
+                nn.ReLU(),
+            )
+            self.fc_local3 = nn.Sequential(
+                nn.Linear(nchannels[2] * 1, feat_dim),
+                nn.BatchNorm1d(feat_dim),
+                nn.ReLU(),
+            )
+            # self.classifier_local = nn.Linear(feat_dim, num_classes)
+            # self.feat_dim = feat_dim * 2
+            self.classifier_local0 = nn.Linear(feat_dim, num_classes)
+            self.classifier_local1 = nn.Linear(feat_dim, num_classes)
+            self.classifier_local2 = nn.Linear(feat_dim, num_classes)
+            self.classifier_local3 = nn.Linear(feat_dim, num_classes)
+            self.classifier_local0.apply(weights_init_kaiming)
+            self.classifier_local1.apply(weights_init_kaiming)
+            self.classifier_local2.apply(weights_init_kaiming)
+            self.classifier_local3.apply(weights_init_kaiming)
+
+
+
+
         else:
             self.feat_dim = feat_dim
 
@@ -344,21 +372,28 @@ class HACNN(nn.Module):
                 x_local_i = x3_local_list[region_idx]
                 x_local_i = F.avg_pool2d(x_local_i, x_local_i.size()[2:]).view(x_local_i.size(0), -1)
                 x_local_list.append(x_local_i)
-            x_local = torch.cat(x_local_list, 1)
-            x_local = self.fc_local(x_local)
+            # x_local = torch.cat(x_local_list, 1)
+            # x_local = self.fc_local(x_local)
+            x_local0=self.fc_local0(x_local_list[0])
+            x_local1 = self.fc_local1(x_local_list[1])
+            x_local2 = self.fc_local2(x_local_list[2])
+            x_local3 = self.fc_local3(x_local_list[3])
 
-        if not self.training:
-            # l2 normalization before concatenation
-            if self.learn_region:
-                x_global = x_global / x_global.norm(p=2, dim=1, keepdim=True)
-                x_local = x_local / x_local.norm(p=2, dim=1, keepdim=True)
-                return torch.cat([x_global, x_local], 1)
-            else:
-                return x_global
+        # if not self.training:
+        #     # l2 normalization before concatenation
+        #     if self.learn_region:
+        #         x_global = x_global / x_global.norm(p=2, dim=1, keepdim=True)
+        #         x_local = x_local / x_local.norm(p=2, dim=1, keepdim=True)
+        #         return torch.cat([x_global, x_local], 1)
+        #     else:
+        #         return x_global
 
         prelogits_global = self.classifier_global(x_global)
         if self.learn_region:
-            prelogits_local = self.classifier_local(x_local)
+            prelogits_local0 = self.classifier_local0(x_local0)
+            prelogits_local1 = self.classifier_local1(x_local1)
+            prelogits_local2 = self.classifier_local2(x_local2)
+            prelogits_local3 = self.classifier_local3(x_local3)
 
         if self.loss == 'softmax':
             if self.learn_region:
@@ -368,7 +403,9 @@ class HACNN(nn.Module):
 
         elif self.loss == 'triplet':
             if self.learn_region:
-                return (prelogits_global, prelogits_local), (x_global, x_local)
+                return prelogits_global, x_global,prelogits_local0,prelogits_local1,prelogits_local2,prelogits_local3,x_local0,x_local1,x_local2,x_local3
+
+
             else:
                 return prelogits_global, x_global
 
@@ -442,6 +479,8 @@ class MGN(nn.Module):
         self._init_fc(self.fc_id_256_2_1)
         self._init_fc(self.fc_id_256_2_2)
 
+        self.haa=HACNN()
+
     @staticmethod
     def _init_reduction(reduction):
         # conv
@@ -459,6 +498,11 @@ class MGN(nn.Module):
         nn.init.constant_(fc.bias, 0.)
 
     def forward(self, x):
+
+        x2=F.upsample(x,(160,64),mode='bilinear',align_corners=True)
+
+        relogits_global, x_global, prelogits_local0, prelogits_local1, prelogits_local2, prelogits_local3, x_local0, x_local1, x_local2, x_local3=self.haa(x2)
+
         x = self.backbone(x)
 
         p1 = self.p1(x)
