@@ -9,6 +9,41 @@ num_classes = 751  # market1501 751 cuhk 767 duke702
 width_ratio=1.0
 height_ratio=0.2
 
+class BatchDrop(nn.Module):
+    def __init__(self,h_ratio,w_ratio):
+        super(BatchDrop,self).__init__()
+        self.h_ratio=h_ratio
+        self.w_ratio=w_ratio
+
+    def forward(self,x):
+        if self.training:
+            h,w=x.size()[-2:]
+            rh=int(self.h_ratio*h)
+            rw=int(self.w_ratio*w)
+            sx=random.randint(0,h-rh)
+            xy=ramndom.randint(0,w-rw)
+            mask=x.new_ones(x.size())
+            mask[:,:,sx:sx+rh,sy:sy+rw]=0
+            x=x*mask
+
+        return x
+
+def weights_init_kaiming(m):
+    classname=m.__class__.__name__
+    if classname.find('Linear')!=-1:
+        nn.init.kaiming_normal_(m.weight,a=0,mode='fan_out')
+        nn.init.constant_(m.bias,0.0)
+    elif classname.find('Conv')!=-1:
+        nn.init.kaiming_normal_(m.weight, a=0, mode='fan_in')
+        if m.bias is not None:
+            nn.init.constant_(m.bias, 0.0)
+    elif classname.find('BatchNorm') != -1:
+        if m.affine:
+            nn.init.normal_(m.weight,1.0,0.02)
+            nn.init.constant_(m.bias,0.0)
+
+
+
 class ConvBlock(nn.Module):
     """Basic convolutional block.
 
@@ -478,8 +513,34 @@ class MGN(nn.Module):
         self._init_fc(self.fc_id_256_2_0)
         self._init_fc(self.fc_id_256_2_1)
         self._init_fc(self.fc_id_256_2_2)
+        ##############################
+        self.res_part2=SEResNetBottleNeck(2048,512,groups=1,reduction=16)
+        self.part_maxpool=nn.AdaptiveMaxPool2d(1,1)
+        self.batch_crop=BatchDrop(height_ratio,width_ratio)
+        self.reductionBFE= nn.Sequential(
+            nn.Linear(2048,256,1),
+            nn.BatchNorm1d(256),
+            nn.ReLU()
+        )
+        self.reductionBFE.apply(weights_init_kaiming)
+        self.softmaxBFE= nn.Linear(256,num_classes)
+        self.softmaxBFE.apply(weights_init_kaiming)
 
+        ##############################
         self.haa=HACNN()
+
+        from functools import partial
+        import pickle
+        pickle.load =partial(pickle.load,encoding='latin1')
+        pickle.Unpickler=partial(pickle.Unpickler,encoding='latin1')
+        myhaamodel_dict=torch.load('hacnn_market_xent.pth.tar',map_location=lambda storage,loc:storage,pickle_module=pickle)
+        model_dict=self.haa.state_dict()
+        myhaamodel_dict={k:v for k,v in myhaamodel_dict['state_dict'].items() if 'fc_local' not in k and 'fc_global' not in k and 'classifier_global' not in k and 'classifier_local' not in k}
+        model_dict.update(myhaamodel_dict)
+        self.haa.load_state_dict(model_dict)
+
+
+
 
     @staticmethod
     def _init_reduction(reduction):
@@ -501,7 +562,7 @@ class MGN(nn.Module):
 
         x2=F.upsample(x,(160,64),mode='bilinear',align_corners=True)
 
-        relogits_global, x_global, prelogits_local0, prelogits_local1, prelogits_local2, prelogits_local3, x_local0, x_local1, x_local2, x_local3=self.haa(x2)
+        prelogits_global, x_global, prelogits_local0, prelogits_local1, prelogits_local2, prelogits_local3, x_local0, x_local1, x_local2, x_local3=self.haa(x2)
 
         x = self.backbone(x)
 
@@ -540,6 +601,13 @@ class MGN(nn.Module):
         l0_p3 = self.fc_id_256_2_0(f0_p3)
         l1_p3 = self.fc_id_256_2_1(f1_p3)
         l2_p3 = self.fc_id_256_2_2(f2_p3)
+
+        ##########################################
+        xbfe=self.res_part2(p4)
+        xbfe=self.batch_crop(xbfe)
+        triplet_feature=self.part_maxpool(xbfe).squeeze(dim=3).squeeze(dim=2)
+        feature=self.reductionBFE(triplet_feature)
+        softmax_feature=self.softmaxBFE(feature)
 
         predict = torch.cat([fg_p1, fg_p2, fg_p3, f0_p2, f1_p2, f0_p3, f1_p3, f2_p3], dim=1)
 

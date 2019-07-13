@@ -173,10 +173,10 @@ if __name__ == '__main__':
     if opt.mode == 'train':
 
         for epoch in range(1, opt.epoch + 1):
-            print('\nepoch', epoch)
+            print('epoch', epoch)
             main.train()
             if epoch % 50 == 0:
-                print('\nstart evaluate')
+                print('start evaluate')
                 main.evaluate(logger)
                 # os.makedirs('weights', exist_ok=True)
                 # torch.save(model.state_dict(), ('weights/model_{}.pt'.format(epoch)))
@@ -193,6 +193,34 @@ if __name__ == '__main__':
         print('start evaluate')
         model.load_state_dict(torch.load(opt.weight))
         main.evaluate()
+    if opt.mode=='resume':
+        print(' start resuming')
+        checkpoint=torch.load('checkpoint_epoch100.pth.tar')
+        model.load_state_dict(checkpoint['model_state_dict'])
+        main.scheduler.load_state_dict(checkpoint['scheduler_dict'])
+        main.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        main.optimizer_center.load_state_dict(checkpoint['optimizer_center'])
+        epoch=checkpoint['epoch']
+
+        for epoch in range(epoch, opt.epoch + 1):
+            print('epoch', epoch)
+            main.train()
+            if epoch % 50 == 0:
+                print('start evaluate')
+                main.evaluate(logger)
+                # os.makedirs('weights', exist_ok=True)
+                # torch.save(model.state_dict(), ('weights/model_{}.pt'.format(epoch)))
+                PATH_CHECKP='weights/checkpoint_epoch'+str(epoch)+'.pth.tar'
+                torch.save({
+                    'epoch':epoch,
+                    'model_state_dict':model.state_dict(),
+                    'optimizer_state_dict':main.optimizer.state_dict(),
+                    'scheduler_dict':main.scheduler.state_dict(),
+                    'optimizer_center':main.optimizer_center.state_dict(),
+                })
+
+
+
 
     if opt.mode == 'vis':
         print('visualize')
